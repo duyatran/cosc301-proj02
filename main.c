@@ -12,13 +12,8 @@
 #include <poll.h>
 #include <signal.h>
 #define PROMPT "prompt > "
-
-void check_input(char **str) {
-    char *comment;
-    if ((comment = strchr(str, '#')) != NULL) {
-		*comment = '\0';
-	}
-}
+#define SEQUENTIAL 0 
+#define PARALLEL 1
 
 void print_tokens(char *tokens[]) {
     int i = 0;
@@ -62,60 +57,83 @@ void free_tokens(char **tokens) {
     free(tokens); // then free the array of tokens
 }
 
-void create_process(char **commands, int *exit_code) {
-	int mode = 0; // 0 is sequential, 1 is parallel
-	int special= 0;
-	char **one_command = tokenify(*commands, " \n\t");
-	if ((strcmp(one_command[0], "exit")) == 0) {
-		special = 1;
-		*exit_code = 1;
-	}
-	//else if (strcmp(one_command[0], "mode") {
-		
-	//}
-	if (special == 0) {
-		pid_t tpid;
-		int child_pid = fork();
-		int child_status;
-		if (child_pid < 0) {
-			// fork failed;
-			fprintf(stderr, "fork failed\n");
-			//exit(1);
-		} 
-		else if (child_pid == 0) {
-		// child: execv this command line
-			if (execv(one_command[0],one_command) < 0) {
-				fprintf(stderr, "execv failed: %s\n", strerror(errno));
-			}
-		} 
-		else {
-			// parent waits until child terminated
-			do {
-				tpid = wait(&child_status);
-				if (tpid == child_pid) { // if child terminated
-					free_tokens(one_command);
-					break;
-				}
-			} while(tpid != child_pid);
+void create_process(char **one_command) {
+	pid_t tpid;
+	int child_pid = fork();
+	int child_status;
+	if (child_pid < 0) {
+		fprintf(stderr, "fork failed, could not create child process\n");
+	} 
+	else if (child_pid == 0) {
+	// child: execv this command line
+		if (execv(one_command[0],one_command) < 0) {
+			fprintf(stderr, "execv failed: %s\n", strerror(errno));
 		}
+	}
+	else {
+		// parent waits until child terminated
+		do {
+			tpid = wait(&child_status);
+			if (tpid == child_pid) { // if child terminated
+				free_tokens(one_command);
+				break;
+			}
+		} while(tpid != child_pid);
 	}
 }
 
 void start_prompt() {
 	char buffer[1024];
 	int ex = 0;
+	int mode = SEQUENTIAL;
 	while (fgets(buffer, 1024, stdin) != NULL) {
-		check_input(&buffer);
+		
+		char *comment;
+		if ((comment = strchr(buffer, '#')) != NULL) {
+			*comment = '\0';
+		}		
+		
 		char **commands = tokenify(buffer, ";");
+		
 		printf("list of commands\n");
 		print_tokens(commands);
 		printf("end\n");
+		
 		int i = 0;
+		char **one_command;
 		while (commands[i] != NULL) {
-			create_process(&(commands[i]), &ex);
+			one_command = tokenify(commands[i], " \n\t");
+			print_tokens(one_command);
+			if ((strcmp(one_command[0], "exit")) == 0) {
+				ex = 1;
+				i++;
+				continue;
+			}
+			if ((strcmp(one_command[0], "mode")) == 0) {
+				if (one_command[1] != NULL) {
+					if ((strcmp(one_command[1], "sequential")) == 0 ||
+								(strcmp(one_command[1], "s")) == 0) {
+						mode = 0;
+					}
+					else if ((strcmp(one_command[1], "parallel")) == 0 ||
+								(strcmp(one_command[1], "p")) == 0) {
+						mode = 1;
+					}
+					else {
+						printf("Invalid mode, please try again.\n");
+					}
+				}
+				else {
+					printf("Current mode: %d\n", mode);
+				}
+				i++;
+				continue;
+			}
+			create_process(one_command);
 			i++;
 		}
 		free_tokens(commands);
+		// exit after finishing all commands
 		if (ex == 1) {
 			exit(1);
 		}
