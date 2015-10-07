@@ -86,6 +86,7 @@ void start_prompt() {
 	char buffer[1024];
 	int ex = 0;
 	int mode = SEQUENTIAL;
+	int new_mode = mode;
 	while (fgets(buffer, 1024, stdin) != NULL) {
 		
 		char *comment;
@@ -93,13 +94,8 @@ void start_prompt() {
 			*comment = '\0';
 		}		
 		
-		char **commands = tokenify(buffer, ";");
-		
-		printf("list of commands\n");
-		print_tokens(commands);
-		printf("end\n");
-		
 		int i = 0;
+		char **commands = tokenify(buffer, ";");
 		char **one_command;
 		while (commands[i] != NULL) {
 			one_command = tokenify(commands[i], " \n\t");
@@ -113,11 +109,11 @@ void start_prompt() {
 				if (one_command[1] != NULL) {
 					if ((strcmp(one_command[1], "sequential")) == 0 ||
 								(strcmp(one_command[1], "s")) == 0) {
-						mode = 0;
+						new_mode = SEQUENTIAL;
 					}
 					else if ((strcmp(one_command[1], "parallel")) == 0 ||
 								(strcmp(one_command[1], "p")) == 0) {
-						mode = 1;
+						new_mode = PARALLEL;
 					}
 					else {
 						printf("Invalid mode, please try again.\n");
@@ -126,17 +122,46 @@ void start_prompt() {
 				else {
 					printf("Current mode: %d\n", mode);
 				}
+				printf("Mode is: %d\n", mode);
 				i++;
 				continue;
 			}
-			create_process(one_command);
+			//create_process(one_command);
+			
+			pid_t tpid;
+			int child_pid = fork();
+			int child_status;
+			if (child_pid < 0) {
+				fprintf(stderr, "fork failed, could not create child process\n");
+			} 
+			else if (child_pid == 0) {
+			// child: execv this command line
+				if (execv(one_command[0],one_command) < 0) {
+					fprintf(stderr, "execv failed: %s\n", strerror(errno));
+				}
+			}
+			else if ((child_pid > 0) && mode == SEQUENTIAL) {
+				// parent waits until child terminated
+				printf("not in here");
+				do {
+					tpid = wait(&child_status);
+					if (tpid == child_pid) { // if child terminated
+						free_tokens(one_command);
+						break;
+					}
+				} while(tpid != child_pid);
+			}
 			i++;
 		}
-		free_tokens(commands);
+		while (wait(NULL) > 0);
 		// exit after finishing all commands
 		if (ex == 1) {
 			exit(1);
 		}
+		if (new_mode != mode) {
+			mode = new_mode;
+		}
+		free_tokens(commands);
 		printf("%s", PROMPT);
 		fflush(stdout);
 	}
