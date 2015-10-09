@@ -17,6 +17,79 @@
 #define RUNNING 1
 #define PAUSED 0
 
+char ** load_directories(const char * filename) {
+	FILE *dir_file = fopen(filename, "r");
+	char next[32];
+	int len = 0;
+    while (fgets(next, 32, dir_file) != NULL) {
+		len++;
+	}
+	char** dir_list = malloc(sizeof(char *) * (len+1));
+	fclose(dir_file);
+	dir_file = fopen(filename, "r");
+	int i = 0;
+	while (fgets(next, 32, dir_file) != NULL){
+		next[strlen(next)-1]='\0';
+		dir_list[i] = strdup(next);
+		i++;
+	}
+	dir_list[i] = NULL;
+	fclose(dir_file);
+	return dir_list;
+}
+
+void free_directories(char** dir_list) {
+	int i=0;
+	while(dir_list[i]!=NULL){
+		free(dir_list[i]);
+		i++;
+	}
+	free(dir_list[i]);
+	free(dir_list);
+}
+
+void print_tokens(char *tokens[]) {
+    int i = 0;
+    while (tokens[i] != NULL) {
+        printf("Token %d: %s\n", i+1, tokens[i]);
+        i++;
+    }
+}
+
+char** tokenify(const char *s, const char *delimit) {
+    char *copy1 = strdup(s);
+    char *saveptr1;
+	char *count = strtok_r(copy1, delimit, &saveptr1);
+    int len = 0;
+    while (count != NULL) {
+		len++;
+		count = strtok_r(NULL, delimit, &saveptr1);
+	}
+	free(copy1);
+	char **tokens = malloc(sizeof(char *) * (len+1));
+    char *copy2 = strdup(s);
+    char *saveptr2;
+    char *token = strtok_r(copy2, delimit, &saveptr2);
+    int i = 0;
+    for (i = 0; token != NULL; i++) {
+		tokens[i] = strdup(token);
+		token = strtok_r(NULL, delimit, &saveptr2);
+	}
+	free(copy2);
+	tokens[i] = NULL;
+	return tokens;
+}
+
+void free_tokens(char **tokens) {
+    int i = 0;
+    while (tokens[i] != NULL) {
+        free(tokens[i]); // free each token
+        i++;
+    }
+	free(tokens[i]);
+    free(tokens); // then free the array of tokens
+}
+
 struct _process{
 	pid_t pid;
 	char ** command;
@@ -50,6 +123,7 @@ process * delete_process (process* head, pid_t pid){
 	if (head->pid==pid){
 		process * tmp=head;
 		head=head->next;
+		free_tokens(tmp->command);
 		free(tmp);
 	}
 	else{
@@ -59,6 +133,7 @@ process * delete_process (process* head, pid_t pid){
 			tmp=tmp->next;
 			if (tmp->pid==pid){
 				before->next=tmp->next;
+				free_tokens(tmp->command);
 				free(tmp);
 				break;
 			}
@@ -118,47 +193,6 @@ void print_process (process * head){
 
 struct stat;
 struct pollfd;
-
-void print_tokens(char *tokens[]) {
-    int i = 0;
-    while (tokens[i] != NULL) {
-        printf("Token %d: %s\n", i+1, tokens[i]);
-        i++;
-    }
-}
-
-char** tokenify(const char *s, const char *delimit) {
-    char *copy1 = strdup(s);
-    char *saveptr1;
-	char *count = strtok_r(copy1, delimit, &saveptr1);
-    int len = 0;
-    while (count != NULL) {
-		len++;
-		count = strtok_r(NULL, delimit, &saveptr1);
-	}
-	free(copy1);
-	char **tokens = malloc(sizeof(char *) * (len+1));
-    char *copy2 = strdup(s);
-    char *saveptr2;
-    char *token = strtok_r(copy2, delimit, &saveptr2);
-    int i = 0;
-    for (i = 0; token != NULL; i++) {
-		tokens[i] = strdup(token);
-		token = strtok_r(NULL, delimit, &saveptr2);
-	}
-	free(copy2);
-	tokens[i] = NULL;
-	return tokens;
-}
-
-void free_tokens(char **tokens) {
-    int i = 0;
-    while (tokens[i] != NULL) {
-        free(tokens[i]); // free each token
-        i++;
-    }
-    free(tokens); // then free the array of tokens
-}
 
 int command_check(char **dir_list,char *** one_command){
 	int i=0;
@@ -226,12 +260,7 @@ void sequential (int * new_mode, int *ex, char **commands, char ** dir_list){//n
 				}
 			}
 			else {
-				if (*new_mode == SEQUENTIAL) { 
 					printf("Current mode: sequential\n");
-				}
-				else {
-					printf("Current mode: parallel\n");
-				}
 			}
 			free_tokens(one_command);
 			i++;
@@ -276,6 +305,7 @@ void sequential (int * new_mode, int *ex, char **commands, char ** dir_list){//n
 				}
 			}else{
 				waitpid(child_pid, &child_status, 0);
+				free_tokens(one_command);
 			}
 		}
 		i++;
@@ -289,6 +319,8 @@ void start_prompt(char ** dir_list) {
 	int mode = SEQUENTIAL;
 	int new_mode = mode;
 	process *head = NULL;
+	char **one_command;
+
 	while (fgets(buffer, 1024, stdin) != NULL) {
 		buffer[strlen(buffer)-1] = '\0';
 		char *comment = NULL;
@@ -304,24 +336,20 @@ void start_prompt(char ** dir_list) {
 		else {
 			int cont = 1;
 			int i = 0;
-			char **one_command;
+			int special = 0;
 			while (cont) {
 				while(commands[i] != NULL) {
 					one_command = tokenify(commands[i], " \n\t");
 					if (one_command[0] == NULL) {
-						cont = 0;
-						i++;
-						continue;
+						special = 1;
 					}
 					if ((strcmp(one_command[0], "exit")) == 0) {
 						ex = 1;
-						i++;
-						continue;
+						special = 1;
 					}
 					if ((strcmp(one_command[0], "jobs")) == 0) {
 						print_process(head);
-						i++;
-						continue;
+						special = 1;
 					}
 				
 					if (((strcmp(one_command[0], "pause")) == 0) ||
@@ -347,8 +375,7 @@ void start_prompt(char ** dir_list) {
 						else {
 							printf("Please call resume or pause with a PID.\n");
 						}
-						i++;
-						continue;
+						special = 1;
 					}
 				
 					if ((strcmp(one_command[0], "mode")) == 0) {
@@ -374,6 +401,12 @@ void start_prompt(char ** dir_list) {
 								printf("Current mode: parallel\n");
 							}
 						}
+						special = 1;
+					}
+					
+					if (special) {
+						special = 0;
+						free_tokens(one_command);
 						i++;
 						continue;
 					}
@@ -424,28 +457,28 @@ void start_prompt(char ** dir_list) {
 				    // error (<0).
 				    	
 					while (1) {
+						result = waitpid(-1, &status, WNOHANG);
+						if (result > 0) {
+							process *temp = find_pid(head, result);
+							printf("Process %d (%s) completed.\n", temp->pid, *(temp->command));
+							head = delete_process(head, temp->pid);
+						}
+						if (head == NULL && ex == 1) {
+							free_directories(dir_list);
+							exit(0);
+						}
 						int return_val = poll(&pfd[0], 1, 500);
 						if (return_val == -1) {
 							perror("poll"); // error occurred in poll()
 						} 
-						else if (return_val == 0) {
-							// if timeout, check children's status
-							result = waitpid(-1, &status, WNOHANG);
-							if (result > 0) {
-								process *temp = find_pid(head, result);
-								printf("Process %d (%s) completed.\n", temp->pid, *(temp->command));
-								head = delete_process(head, temp->pid);
-							}
-							if (head == NULL && ex == 1) {
-								cont = 0;
-								break;
-							}v
-						}
 						if (return_val > 0) {
 							char temp[1024];
 							read(pfd[0].fd, temp, sizeof(buffer));
+							char *null = NULL;
+							if ((null = strchr(temp, '\n')) != NULL) {
+								*null = '\0';
+							}
 							strncpy(buffer,temp,strlen(temp)+1);
-							buffer[strlen(buffer)-1] = '\0';
 							char *comment = NULL;
 							if ((comment = strchr(buffer, '#')) != NULL) {
 								*comment = '\0';
@@ -461,41 +494,16 @@ void start_prompt(char ** dir_list) {
 		while (wait(NULL) > 0); // parallel stage 1 || when cont = false
 		// exit after finishing all commands
 		if (ex == 1) {
+			free_directories(dir_list);
 			exit(0);
 		}
 		if (new_mode != mode) {
 			mode = new_mode;
 		}
-		//free_tokens(commands);
 		printf("%s", PROMPT);
 		fflush(stdout);
 	}
 	printf("\n"); // EOF reached, just print new line before exiting
-}
-
-char ** load_directories(const char * filename) {
-	FILE *dir_file = fopen(filename, "r");
-	char** dir_list = malloc(sizeof(char *) * 8);
-	dir_list[7] = NULL;
-	char next[32];
-	int i = 0;
-	while (fgets(next, 32, dir_file) != NULL){
-		next[strlen(next)-1]='\0';
-		dir_list[i] = strdup(next);
-		i++;
-	}
-	
-	fclose(dir_file);
-	return dir_list;
-}
-
-void free_directories(char** dir_list) {
-	int i=0;
-	while(dir_list[i]!=NULL){
-		free(dir_list[i]);
-		i++;
-	}
-	free(dir_list);
 }
 
 int main(int argc, char **argv) {
