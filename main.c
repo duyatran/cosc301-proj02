@@ -280,6 +280,7 @@ void sequential (int * new_mode, int *ex, char **commands, char ** dir_list){//n
 		}
 		i++;
 	}
+	free_tokens(commands);
 }
 
 void start_prompt(char ** dir_list) {
@@ -290,7 +291,7 @@ void start_prompt(char ** dir_list) {
 	process *head = NULL;
 	while (fgets(buffer, 1024, stdin) != NULL) {
 		buffer[strlen(buffer)-1] = '\0';
-		char *comment;
+		char *comment = NULL;
 		if ((comment = strchr(buffer, '#')) != NULL) {
 			*comment = '\0';
 		}
@@ -406,9 +407,10 @@ void start_prompt(char ** dir_list) {
 					}
 					i++;
 				}
+				
 				// after first round of forking, parent poll for new commands
 				// declare an array of a single struct pollfd
-
+				free_tokens(commands);
 				if (cont == 1) {
 					pid_t result;
 					int status;
@@ -422,41 +424,37 @@ void start_prompt(char ** dir_list) {
 				    // error (<0).
 				    	
 					while (1) {
-					
-					int return_val = poll(&pfd[0], 1, 500);
-					if (return_val == -1) {
-						perror("poll"); // error occurred in poll()
-					} 
-					else if (return_val == 0) {
-						// if timeout, check children's status
-						result = waitpid(-1, &status, WNOHANG);
-						if (result == -1) {
-							printf("Error while waitpid: %s\n", strerror(errno));
+						int return_val = poll(&pfd[0], 1, 500);
+						if (return_val == -1) {
+							perror("poll"); // error occurred in poll()
+						} 
+						else if (return_val == 0) {
+							// if timeout, check children's status
+							result = waitpid(-1, &status, WNOHANG);
+							if (result > 0) {
+								process *temp = find_pid(head, result);
+								printf("Process %d (%s) completed.\n", temp->pid, *(temp->command));
+								head = delete_process(head, temp->pid);
+							}
+							if (head == NULL && ex == 1) {
+								cont = 0;
+								break;
+							}v
 						}
-						else if (result == 0) {
-							continue;
-						}
-						else {
-							process *temp = find_pid(head, result);
-							printf("Process %d (%s) completed.\n", temp->pid, *(temp->command));
-							head = delete_process(head, temp->pid);
-							free_tokens(temp->command);
+						if (return_val > 0) {
+							char temp[1024];
+							read(pfd[0].fd, temp, sizeof(buffer));
+							strncpy(buffer,temp,strlen(temp)+1);
+							buffer[strlen(buffer)-1] = '\0';
+							char *comment = NULL;
+							if ((comment = strchr(buffer, '#')) != NULL) {
+								*comment = '\0';
+							}
+						    commands = tokenify(buffer, ";");
+						    i = 0;
+							break;
 						}
 					}
-					if (return_val > 0) {
-						char temp[1024];
-						read(pfd[0].fd, temp, sizeof(buffer));
-						strncpy(buffer,temp,strlen(temp)+1);
-						buffer[strlen(buffer)-1] = '\0';
-						char *comment;
-						if ((comment = strchr(buffer, '#')) != NULL) {
-							*comment = '\0';
-						}
-						printf("buffer is: %s\n",buffer);
-					    commands = tokenify(buffer, ";");
-						break;
-					}
-				}
 				}
 			}
 		}
@@ -468,7 +466,7 @@ void start_prompt(char ** dir_list) {
 		if (new_mode != mode) {
 			mode = new_mode;
 		}
-		free_tokens(commands);
+		//free_tokens(commands);
 		printf("%s", PROMPT);
 		fflush(stdout);
 	}
