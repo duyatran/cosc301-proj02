@@ -201,12 +201,13 @@ void sequential (int * new_mode, int *ex, char **commands, char ** dir_list){//n
 	while (commands[i]!=NULL){
 		one_command=tokenify(commands[i]," \n\t");
 		if (one_command[0] == NULL) {
-					free_tokens(one_command);
-					i++;
-					continue;
+			free_tokens(one_command);
+			i++;
+			continue;
 		}
 		if (strcmp(one_command[0],"exit")==0){
 			*ex=1;
+			free_tokens(one_command);
 			i++;
 			continue;
 		}
@@ -232,19 +233,23 @@ void sequential (int * new_mode, int *ex, char **commands, char ** dir_list){//n
 					printf("Current mode: parallel\n");
 				}
 			}
+			free_tokens(one_command);
 			i++;
 			continue;
 		}
 		else if (strcmp(one_command[0],"jobs")==0){
 			printf("No other jobs running in sequential mode\n");
+			free_tokens(one_command);
 			i++;
 			continue;
 		}else if (strcmp(one_command[0],"pause")==0){
 			printf("Pause is not a valid command in sequential mode\n");
+			free_tokens(one_command);
 			i++;
 			continue;
 		}else if (strcmp(one_command[0],"resume")==0){
 			printf("Resume is not a valid command in sequential mode\n");
+			free_tokens(one_command);
 			i++;
 			continue;
 		}else{
@@ -260,7 +265,6 @@ void sequential (int * new_mode, int *ex, char **commands, char ** dir_list){//n
 					continue;
 				}
 			}
-			pid_t tpid;
 			int child_pid=fork();
 			int child_status;
 			if(child_pid<0){
@@ -271,13 +275,7 @@ void sequential (int * new_mode, int *ex, char **commands, char ** dir_list){//n
 					fprintf(stderr,"Execution failed: %s\n",strerror(errno));
 				}
 			}else{
-				do{
-					tpid=wait(&child_status);
-					if (tpid==child_pid){
-						free_tokens(one_command);
-						break;
-					}
-				}while(tpid!=child_pid);
+				waitpid(child_pid, &child_status, 0);
 			}
 		}
 		i++;
@@ -405,53 +403,60 @@ void start_prompt(char ** dir_list) {
 					}
 					else if (child_pid > 0) {
 						head = add_process(head, child_pid, one_command, RUNNING);
-						free_tokens(one_command);
 					}
 					i++;
 				}
 				// after first round of forking, parent poll for new commands
 				// declare an array of a single struct pollfd
+
 				if (cont == 1) {
+					pid_t result;
+					int status;
 				    struct pollfd pfd[1];
 				    pfd[0].fd = 0; // stdin is file descriptor 0
 				    pfd[0].events = POLLIN;
 				    pfd[0].revents = 0;
-				    int return_val;
 					// wait for input on stdin, up to 1000 milliseconds
 				    // the return value tells us whether there was a 
 				    // timeout (0), something happened (>0) or an
 				    // error (<0).
-				    process *list = head;
-					while (list != NULL) {
-						printf("Currently checking: %s", *(list->command));
-					    int status;
-						pid_t result = waitpid(list->pid, &status, WNOHANG);
+				    	
+					while (1) {
+					
+					int return_val = poll(&pfd[0], 1, 500);
+					if (return_val == -1) {
+						perror("poll"); // error occurred in poll()
+					} 
+					else if (return_val == 0) {
+						// if timeout, check children's status
+						result = waitpid(-1, &status, WNOHANG);
 						if (result == -1) {
 							printf("Error while waitpid: %s\n", strerror(errno));
-							list = list -> next;
 						}
 						else if (result == 0) {
-							list = list -> next;
+							continue;
 						}
 						else {
-							// Child exited
-							process *temp = list;
-							printf("Process %d (%s) completed\n.", list->pid, *(list->command));
-							list = list -> next;
+							process *temp = find_pid(head, result);
+							printf("Process %d (%s) completed.\n", temp->pid, *(temp->command));
 							head = delete_process(head, temp->pid);
-							if (head == NULL) {
-								cont = 0;
-							}
+							free_tokens(temp->command);
 						}
 					}
-					while ((return_val = poll(&pfd[0], 1, 5000)) == 0); 
-
 					if (return_val > 0) {
-						printf("you typed something on stdin\n");
-						fgets(buffer, 1024, stdin);
+						char temp[1024];
+						read(pfd[0].fd, temp, sizeof(buffer));
+						strncpy(buffer,temp,strlen(temp)+1);
+						buffer[strlen(buffer)-1] = '\0';
+						char *comment;
+						if ((comment = strchr(buffer, '#')) != NULL) {
+							*comment = '\0';
+						}
+						printf("buffer is: %s\n",buffer);
 					    commands = tokenify(buffer, ";");
-						break;	        
+						break;
 					}
+				}
 				}
 			}
 		}
